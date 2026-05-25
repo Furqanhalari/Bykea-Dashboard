@@ -6,20 +6,14 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-# Configure the Streamlit page first because Streamlit expects page settings
-# before visible UI elements; this gives the dashboard a wide analytics layout.
 st.set_page_config(
     page_title="Bykea Ride Analytics Dashboard",
     page_icon="🛵",
     layout="wide",
     initial_sidebar_state="expanded",
 )
-# INTERVIEW NOTE: set_page_config controls the browser tab, icon, and layout.
-# In production dashboards, page width matters because analytical views need space.
 
 
-# Define reusable brand colors so every chart and card follows one visual system.
-# Keeping colors in constants makes the design easier to maintain and explain.
 BYKEA_ORANGE = "#FF6B00"
 DARK_NAVY = "#1A1A2E"
 LIGHT_GREY = "#F8F9FA"
@@ -30,8 +24,6 @@ BLUE = "#4A90D9"
 LIGHT_ORANGE = "#FFF1E8"
 
 
-# Inject custom CSS at the top of the app to make Streamlit feel like a branded
-# product dashboard instead of a default prototype.
 st.markdown(
     f"""
     <style>
@@ -165,92 +157,52 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-# INTERVIEW NOTE: CSS overrides Streamlit's default theme. This is useful when
-# a data product must match a company brand or executive presentation style.
 
 
-# Generate synthetic Bykea ride data once and cache it because the dataset is
-# reused by every chart; caching keeps filtering interactive and fast.
 @st.cache_data(show_spinner=False)
 def generate_ride_data(n_rows: int = 8000, seed: int = 42) -> pd.DataFrame:
-    # Create a random number generator with a fixed seed so demo data is
-    # repeatable across app refreshes, which helps during testing and interviews.
     rng = np.random.default_rng(seed)
 
-    # Define city-level pickup areas to mimic how a ride-hailing marketplace has
-    # different neighborhood demand pools in each operating city.
     city_area_map = {
         "Karachi": ["DHA", "Gulshan", "Clifton", "PECHS", "Nazimabad", "Saddar", "Korangi", "Lyari", "Malir"],
         "Lahore": ["Gulberg", "DHA Lahore", "Johar Town", "Model Town", "Bahria", "Cantt"],
         "Islamabad": ["F-7", "F-10", "G-9", "Blue Area", "I-8", "E-11", "Bahria Islamabad"],
     }
-
-    # Assign ride IDs as stable unique strings so each row behaves like a
-    # transaction in an operational database.
     ride_ids = [f"RD{i:05d}" for i in range(1, n_rows + 1)]
 
-    # Karachi receives 50% of rides because it is Pakistan's largest city and
-    # would reasonably dominate a Bykea-style marketplace.
     cities = rng.choice(["Karachi", "Lahore", "Islamabad"], size=n_rows, p=[0.50, 0.30, 0.20])
 
-    # Pick pickup areas conditionally by city because each city has its own
-    # neighborhoods; this prevents impossible combinations like Karachi areas in Lahore.
     pickup_areas = [rng.choice(city_area_map[city]) for city in cities]
 
-    # Sample drivers and riders from fixed pools to model repeat activity in a
-    # two-sided marketplace rather than one unique user per row.
     driver_ids = rng.choice([f"DR{i:04d}" for i in range(1, 401)], size=n_rows)
     rider_ids = rng.choice([f"R{i:04d}" for i in range(1, 1201)], size=n_rows)
 
-    # Generate timestamps across 2024 at hourly precision, which supports daily,
-    # hourly, monthly, and cohort analysis from one synthetic source.
     start = pd.Timestamp("2024-01-01 00:00:00")
     end = pd.Timestamp("2024-12-31 23:00:00")
     total_hours = int((end - start).total_seconds() // 3600)
     ride_dates = start + pd.to_timedelta(rng.integers(0, total_hours + 1, size=n_rows), unit="h")
 
-    # Model trip distance with an exponential distribution because most city
-    # rides are short, while a smaller number of long rides create a right tail.
     distance_km = np.clip(rng.exponential(scale=5, size=n_rows), 0.5, 40).round(2)
 
-    # Estimate trip duration from distance plus pickup/drop-off overhead; the
-    # random multipliers represent traffic, waiting, and route differences.
     duration_mins = (distance_km * rng.uniform(3, 6, size=n_rows) + rng.uniform(2, 10, size=n_rows)).round(1)
 
-    # Peak-hour flag captures commute demand; it is used later for surge pricing
-    # and operational comparisons.
     hours = pd.DatetimeIndex(ride_dates).hour
     is_peak_hour = np.isin(hours, [7, 8, 9, 17, 18, 19, 20])
 
-    # Calculate fare from a base amount plus per-kilometer pricing; peak rides
-    # receive a 30% uplift to mimic surge pricing during high demand.
     fare = 50 + distance_km * rng.uniform(13, 18, size=n_rows)
     fare = np.where(is_peak_hour, fare * 1.30, fare).round(0)
 
-    # Payment methods reflect a Pakistan mobility context where cash remains
-    # important, while wallet and card payments are still meaningful digital channels.
     payment_methods = rng.choice(["Cash", "Bykea Pay", "Card"], size=n_rows, p=[0.55, 0.30, 0.15])
 
-    # Status describes the ride lifecycle and gives us both completed activity
-    # and operational friction from cancellations.
     statuses = rng.choice(["Completed", "Cancelled", "In Progress"], size=n_rows, p=[0.80, 0.15, 0.05])
 
-    # Ratings are clipped to the valid 1-5 range because real app ratings cannot
-    # exceed those boundaries even if a normal distribution would.
     driver_ratings = np.clip(rng.normal(4.3, 0.4, size=n_rows), 1, 5).round(2)
     rider_ratings = np.clip(rng.normal(4.1, 0.5, size=n_rows), 1, 5).round(2)
-
-    # Vehicle type mix reflects Bykea's bike-heavy model with cargo and rickshaw
-    # options supporting different use cases and economics.
     vehicle_types = rng.choice(["Bike", "Cargo", "Rickshaw"], size=n_rows, p=[0.70, 0.20, 0.10])
 
-    # Cancellation reason is only meaningful for cancelled rides; completed and
-    # in-progress rides get blank values to avoid misleading categories.
     reasons = ["Driver no show", "Rider cancelled", "No driver available", "Price too high", "Wrong location"]
     cancellation_reason = np.where(statuses == "Cancelled", rng.choice(reasons, size=n_rows), "")
 
-    # Assemble the arrays into one DataFrame, which becomes the app's synthetic
-    # operational fact table.
     df = pd.DataFrame(
         {
             "ride_id": ride_ids,
@@ -272,8 +224,6 @@ def generate_ride_data(n_rows: int = 8000, seed: int = 42) -> pd.DataFrame:
         }
     )
 
-    # Add date parts once so downstream aggregations can reuse simple columns
-    # instead of repeatedly extracting from the timestamp.
     df["date"] = df["ride_date"].dt.date
     df["hour"] = df["ride_date"].dt.hour
     df["month"] = df["ride_date"].dt.to_period("M").astype(str)
@@ -291,12 +241,8 @@ def generate_ride_data(n_rows: int = 8000, seed: int = 42) -> pd.DataFrame:
     return df
 
 
-# INTERVIEW NOTE: cache_data stores the function output keyed by inputs. Since
-# synthetic data is expensive enough to regenerate repeatedly, caching improves UX.
 
 
-# Aggregate the daily trend once per filtered DataFrame; this is a heavier
-# groupby used by the main full-width trend chart.
 @st.cache_data(show_spinner=False)
 def build_daily_trend(filtered_df: pd.DataFrame) -> pd.DataFrame:
     # GROUP BY date and aggregate rides and revenue to create a time-series table.
@@ -313,12 +259,6 @@ def build_daily_trend(filtered_df: pd.DataFrame) -> pd.DataFrame:
     return daily
 
 
-# INTERVIEW NOTE: A cached aggregation lets Streamlit rerun UI code quickly
-# while avoiding repeated pandas work for the same filtered data.
-
-
-# Aggregate monthly performance once per filtered DataFrame because the table
-# combines several metrics and categorical top values.
 @st.cache_data(show_spinner=False)
 def build_monthly_summary(filtered_df: pd.DataFrame) -> pd.DataFrame:
     # Build numeric monthly metrics with named aggregation for readable columns.
@@ -334,8 +274,6 @@ def build_monthly_summary(filtered_df: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
 
-    # Find the top city per month using value_counts; idxmax returns the label
-    # with the largest count inside each monthly group.
     top_city = filtered_df.groupby("month")["city"].agg(lambda s: s.value_counts().idxmax()).reset_index(name="top_city")
 
     # Find the top payment method per month to show payment behavior by period.
@@ -365,16 +303,8 @@ def build_monthly_summary(filtered_df: pd.DataFrame) -> pd.DataFrame:
     return monthly
 
 
-# INTERVIEW NOTE: Named aggregations make pandas groupby output self-documenting,
-# which is especially helpful when presenting business dashboards.
-
-
-# Build a simplified rider cohort matrix to measure whether riders return after
-# their first month; this approximates retention without needing external files.
 @st.cache_data(show_spinner=False)
 def build_cohort_matrix(filtered_df: pd.DataFrame) -> pd.DataFrame:
-    # Work from rider-month pairs so multiple rides in the same month count as
-    # one active rider-month, which is the usual retention analysis unit.
     rider_months = filtered_df[["rider_id", "month"]].drop_duplicates()
 
     # Identify each rider's first observed ride month in the filtered period.
@@ -398,20 +328,12 @@ def build_cohort_matrix(filtered_df: pd.DataFrame) -> pd.DataFrame:
         .reset_index(name="active_riders")
     )
 
-    # Pivot to a matrix where rows are first-ride cohorts and columns are months
-    # since first ride; this is the classic cohort heatmap shape.
     matrix = retention.pivot(index="cohort_month", columns="period_number", values="active_riders").fillna(0)
     matrix.index = pd.to_datetime(matrix.index).strftime("%b 2024")
     matrix.columns = [f"M+{int(col)}" for col in matrix.columns]
     return matrix
 
 
-# INTERVIEW NOTE: Cohort analysis groups users by when they started and then
-# tracks later activity, which is central to retention and growth analysis.
-
-
-# Keep chart styling centralized so every Plotly figure follows the same design
-# rules: transparent background, clean fonts, and reduced visual clutter.
 def style_figure(fig: go.Figure, title: str) -> go.Figure:
     fig.update_layout(
         title={"text": title, "x": 0.02, "xanchor": "left", "font": {"size": 17, "color": DARK_NAVY}},
@@ -426,12 +348,6 @@ def style_figure(fig: go.Figure, title: str) -> go.Figure:
     return fig
 
 
-# INTERVIEW NOTE: A helper function avoids repeating chart cosmetics and makes
-# visual consistency easier to enforce across many sections.
-
-
-# Render a KPI card with custom HTML so we can apply Bykea's orange left border
-# and subtle card shadow consistently.
 def render_kpi(label: str, value: str, delta: str, positive: bool = True) -> None:
     delta_class = "kpi-delta-positive" if positive else "kpi-delta-negative"
     st.markdown(
@@ -445,13 +361,6 @@ def render_kpi(label: str, value: str, delta: str, positive: bool = True) -> Non
         unsafe_allow_html=True,
     )
 
-
-# INTERVIEW NOTE: Custom KPI cards are useful when native st.metric is too
-# limited for brand-specific dashboards.
-
-
-# Render a small metric card for peak/off-peak and vehicle sections where many
-# compact values need to be scanned quickly.
 def render_mini_metric(title: str, value: str) -> None:
     st.markdown(
         f"""
@@ -464,17 +373,9 @@ def render_mini_metric(title: str, value: str) -> None:
     )
 
 
-# INTERVIEW NOTE: Compact cards reduce cognitive load by turning raw aggregates
-# into readable business indicators.
 
-
-# Load the synthetic source data once; all filters and charts derive from this
-# DataFrame so the dashboard stays internally consistent.
 df = generate_ride_data()
 
-
-# Build the sidebar before the main page because filter widgets define the
-# filtered DataFrame reused by every downstream section.
 with st.sidebar:
     # Sidebar title uses the Bykea brand color and communicates dashboard purpose.
     st.markdown('<div class="bykea-sidebar-title">🛵 Bykea Analytics</div>', unsafe_allow_html=True)
@@ -495,8 +396,6 @@ with st.sidebar:
         max_value=pd.Timestamp("2024-12-31").date(),
     )
 
-    # Date widgets can briefly return one date while a user is selecting a range,
-    # so this guard keeps filtering stable.
     if isinstance(date_range, tuple) and len(date_range) == 2:
         start_date, end_date = date_range
     else:
@@ -505,12 +404,7 @@ with st.sidebar:
     st.markdown('<hr class="thin-divider">', unsafe_allow_html=True)
     st.markdown("### 📈 Dataset Info")
 
-# INTERVIEW NOTE: Sidebar filters are the dashboard equivalent of WHERE clauses
-# in SQL; they define which rows each metric and chart should use.
 
-
-# Apply non-date filters once so both the selected period and previous-period
-# KPI comparison can reuse the same business slice.
 base_filtered = df[
     df["city"].isin(selected_cities)
     & df["vehicle_type"].isin(selected_vehicles)
@@ -521,12 +415,7 @@ base_filtered = df[
 # Apply the date filter once and reuse this filtered DataFrame everywhere.
 filtered_df = base_filtered[(base_filtered["date"] >= start_date) & (base_filtered["date"] <= end_date)].copy()
 
-# INTERVIEW NOTE: Filtering once avoids inconsistent chart logic and improves
-# performance because every section reads the same prepared DataFrame.
 
-
-# Update dataset info after filtering so users always know how much data their
-# current selections contain.
 with st.sidebar:
     st.write(f"Rows: **{len(filtered_df):,}**")
     if not filtered_df.empty:
@@ -544,19 +433,11 @@ st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 # INTERVIEW NOTE: A dashboard header frames the business context before users
 # inspect individual metrics.
 
-
-# Stop chart rendering if the selected filters produce no rows; this prevents
-# empty visualizations and gives the user a clear next action.
 if filtered_df.empty:
     st.warning("No data for selected filters")
     st.stop()
 # INTERVIEW NOTE: Empty-state handling is part of production dashboard quality.
 
-
-# SECTION 1 - KPI ROW: Compute executive-level metrics for marketplace health.
-# Total rides measures demand volume, total revenue measures GMV-like business
-# activity, average fare captures pricing, average distance shows trip length,
-# and cancellation rate measures operational friction.
 date_span_days = max((pd.Timestamp(end_date) - pd.Timestamp(start_date)).days + 1, 1)
 previous_end = pd.Timestamp(start_date) - pd.Timedelta(days=1)
 previous_start = previous_end - pd.Timedelta(days=date_span_days - 1)
@@ -588,16 +469,13 @@ with kpi_cols[3]:
     render_kpi("Average Distance", f"{avg_distance:.2f} km", "Trip length signal", True)
 with kpi_cols[4]:
     render_kpi("Cancellation Rate", f"{cancellation_rate:.1f}%", "Lower is better", cancellation_rate <= 15)
-# INTERVIEW NOTE: KPIs are high-level health checks. They summarize demand,
-# revenue, pricing, usage depth, and marketplace reliability in one row.
+
 
 
 # SECTION 2 - TREND ANALYSIS: Build a dual-axis daily trend for rides and revenue.
 st.markdown("## 📈 Daily Ride Volume Trend")
 daily_trend = build_daily_trend(filtered_df)
 
-# Create a secondary-axis figure because ride counts and revenue have different
-# units; two axes allow both patterns to be seen without normalizing values.
 trend_fig = make_subplots(specs=[[{"secondary_y": True}]])
 trend_fig.add_trace(
     go.Scatter(
@@ -679,12 +557,9 @@ with col1:
     hourly_fig = style_figure(hourly_fig, "⏰ Hourly Demand Heatmap")
     hourly_fig.update_layout(coloraxis_showscale=False)
     st.plotly_chart(hourly_fig, use_container_width=True)
-    # INTERVIEW NOTE: Hour patterns matter for driver dispatch because Bykea can
-    # position supply before demand spikes instead of reacting late.
+
 
 with col2:
-    # Aggregate by weekday and use a fixed Monday-Sunday order to avoid random
-    # alphabetical sorting that would break seasonality interpretation.
     weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     dow = (
         filtered_df.groupby("day_name")
@@ -724,16 +599,13 @@ with col3:
     payment_fig.update_traces(textinfo="percent+label", hovertemplate="%{label}<br>Rides=%{value:,}<br>Share=%{percent}<extra></extra>")
     payment_fig = style_figure(payment_fig, "💳 Payment Method Split")
     st.plotly_chart(payment_fig, use_container_width=True)
-    # INTERVIEW NOTE: Cash dominance matters for a Pakistan startup because it
-    # affects collections, fraud risk, wallet adoption, and driver settlement.
+
 
 
 # SECTION 4 - CITY DEEP DIVE: Compare markets and pinpoint pickup areas.
 city_col, area_col = st.columns(2)
 
 with city_col:
-    # City segmentation is the first cut because ride density, pricing, and
-    # operations can vary sharply across markets.
     city_perf = (
         filtered_df.groupby("city")
         .agg(rides=("ride_id", "count"), revenue=("fare", "sum"), avg_fare=("fare", "mean"))
@@ -752,8 +624,7 @@ with city_col:
     )
     city_fig = style_figure(city_fig, "🏙️ City Performance Comparison")
     st.plotly_chart(city_fig, use_container_width=True)
-    # INTERVIEW NOTE: City segmentation helps analysts separate market-size
-    # effects from pricing or service-quality effects.
+
 
 with area_col:
     # GROUP BY pickup area and city to find revenue hotspots for driver placement.
@@ -798,12 +669,9 @@ with fare_col:
     fare_fig.add_vline(x=median_fare, line_color=BLUE, line_width=2, annotation_text=f"Median {median_fare:.0f}")
     fare_fig = style_figure(fare_fig, "💸 Fare Distribution")
     st.plotly_chart(fare_fig, use_container_width=True)
-    # INTERVIEW NOTE: Mean vs median matters with skewed fares because long,
-    # expensive rides can pull the mean above the typical customer experience.
+
 
 with scatter_col:
-    # Scatter distance against fare to validate whether pricing increases
-    # consistently as trips get longer.
     scatter_fig = px.scatter(
         filtered_df.sample(min(len(filtered_df), 2500), random_state=7),
         x="distance_km",
@@ -814,8 +682,7 @@ with scatter_col:
         labels={"distance_km": "Distance (km)", "fare": "Fare (PKR)", "driver_rating": "Driver rating"},
         hover_data=["ride_id", "vehicle_type", "status"],
     )
-    # Fit a simple linear trendline with numpy to avoid relying on external
-    # statistical libraries while still showing the pricing relationship.
+
     slope, intercept = np.polyfit(filtered_df["distance_km"], filtered_df["fare"], 1)
     x_line = np.linspace(filtered_df["distance_km"].min(), filtered_df["distance_km"].max(), 100)
     scatter_fig.add_trace(
@@ -830,8 +697,7 @@ with scatter_col:
     )
     scatter_fig = style_figure(scatter_fig, "📏 Distance vs Fare Scatter")
     st.plotly_chart(scatter_fig, use_container_width=True)
-    # INTERVIEW NOTE: This scatter reveals pricing consistency; tight upward
-    # patterns suggest predictable fares, while wide spread suggests surge or noise.
+
 
 
 # SECTION 6 - PEAK VS OFF-PEAK: Quantify surge-hour impact on rides and revenue.
@@ -867,11 +733,8 @@ peak_fig = px.bar(
 )
 peak_fig = style_figure(peak_fig, "Hourly ride mix by peak and off-peak periods")
 st.plotly_chart(peak_fig, use_container_width=True)
-# INTERVIEW NOTE: Surge pricing raises fares during demand spikes so drivers are
-# encouraged to work when riders need supply the most.
 
 
-# SECTION 7 - VEHICLE TYPE ANALYSIS: Compare products across operational metrics.
 st.markdown("## 🛺 Vehicle Type Analysis")
 vehicle_summary = (
     filtered_df.groupby("vehicle_type")
@@ -884,8 +747,7 @@ vehicle_summary = (
     .reset_index()
 )
 
-# Normalize radar values so metrics with different units can be compared on one
-# spider chart without one large-scale metric overpowering the others.
+
 radar_metrics = ["total_rides", "avg_fare", "avg_distance", "cancellation_rate"]
 radar_norm = vehicle_summary.copy()
 for metric in radar_metrics:
@@ -920,15 +782,10 @@ for vehicle, color in zip(["Bike", "Cargo", "Rickshaw"], [BYKEA_ORANGE, GREEN, B
 radar_fig.update_layout(polar={"radialaxis": {"visible": True, "range": [0, 1]}}, showlegend=True)
 radar_fig = style_figure(radar_fig, "Vehicle comparison radar chart")
 st.plotly_chart(radar_fig, use_container_width=True)
-# INTERVIEW NOTE: Vehicle type affects the business model because bikes optimize
-# speed and coverage, cargo supports logistics, and rickshaws may serve different fares.
 
-
-# SECTION 8 - DRIVER ANALYTICS: Rank drivers and inspect service quality.
 driver_col, rating_col = st.columns(2)
 
 with driver_col:
-    # Aggregate completed driver economics and quality to create a leaderboard.
     driver_board = (
         filtered_df.groupby("driver_id")
         .agg(rides=("ride_id", "count"), total_earnings=("fare", "sum"), avg_rating=("driver_rating", "mean"))
@@ -951,8 +808,6 @@ with driver_col:
         use_container_width=True,
         hide_index=True,
     )
-    # INTERVIEW NOTE: Driver performance tracking helps identify reliable earners,
-    # reward high performers, and investigate quality or productivity gaps.
 
 with rating_col:
     # Plot driver rating distribution and add qualitative zones for interpretation.
@@ -968,8 +823,6 @@ with rating_col:
     rating_fig.add_vrect(x0=4.5, x1=5.0, fillcolor="#D8F5DF", opacity=0.25, line_width=0, annotation_text="Excellent")
     rating_fig = style_figure(rating_fig, "⭐ Driver Rating Distribution")
     st.plotly_chart(rating_fig, use_container_width=True)
-    # INTERVIEW NOTE: Driver quality metrics matter for retention because poor
-    # service can cause riders to churn even when demand is strong.
 
 
 # SECTION 9 - CANCELLATION ANALYSIS: Diagnose failed ride attempts.
@@ -995,12 +848,8 @@ with cancel_col:
         reason_fig = style_figure(reason_fig, "❌ Cancellation Reasons Breakdown")
         reason_fig.update_layout(showlegend=False)
         st.plotly_chart(reason_fig, use_container_width=True)
-    # INTERVIEW NOTE: Cancellations reveal whether failures come from supply,
-    # rider behavior, pricing, or location accuracy.
 
 with cancel_heat_col:
-    # Compute cancellation rate by city and time bucket to find operational risk
-    # windows rather than just total cancellation volume.
     cancel_rate = (
         filtered_df.groupby(["city", "hour_bucket"])["status"]
         .apply(lambda s: (s == "Cancelled").mean() * 100)
@@ -1018,16 +867,12 @@ with cancel_heat_col:
     )
     cancel_heat_fig = style_figure(cancel_heat_fig, "📊 Cancellation Rate by City and Hour")
     st.plotly_chart(cancel_heat_fig, use_container_width=True)
-    # INTERVIEW NOTE: This heatmap guides operations by showing where and when
-    # cancellations spike, which can trigger driver incentives or support checks.
 
 
 # SECTION 10 - MONTHLY TREND TABLE: Summarize executive reporting metrics.
 st.markdown("## 📆 Monthly Performance Summary")
 monthly_summary = build_monthly_summary(filtered_df)
 
-# Use pandas styling for a green revenue gradient while Streamlit column config
-# formats numeric values for a polished business table.
 styled_monthly = monthly_summary.style.background_gradient(subset=["total_revenue"], cmap="Greens").format(
     {
         "total_revenue": "PKR {:,.0f}",
@@ -1051,8 +896,6 @@ st.dataframe(
         "top_payment_method": st.column_config.TextColumn("Top Payment Method"),
     },
 )
-# INTERVIEW NOTE: Monthly reporting turns raw rides into management-ready trends
-# that support budgeting, growth reviews, and operational planning.
 
 
 # SECTION 11 - COHORT INSIGHT: Show simplified rider retention by first ride month.
@@ -1067,138 +910,9 @@ cohort_fig = px.imshow(
 )
 cohort_fig = style_figure(cohort_fig, "Rider return activity by first-ride cohort")
 st.plotly_chart(cohort_fig, use_container_width=True)
-# INTERVIEW NOTE: Cohort analysis reveals whether new riders come back over time,
-# which is critical for a startup because retention makes growth cheaper and stronger.
 
-
-# FOOTER: Close the dashboard with branding and application context.
 st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 st.markdown('<div class="footer-text">🛵 Bykea Ride Analytics Dashboard | Built by Furqan Halari</div>', unsafe_allow_html=True)
-st.markdown('<div class="footer-subtext">FAST-NUCES Karachi | Data Science Intern Application | 2024</div>', unsafe_allow_html=True)
-# INTERVIEW NOTE: A footer gives ownership and context, which matters for a
-# portfolio project or internship application.
+st.markdown('<div class="footer-subtext">FAST-NUCES Karachi | Data Science Intern Application | 2026</div>', unsafe_allow_html=True)
 
 
-# ═══════════════════════════════════════════
-# INTERVIEW PREPARATION NOTES
-# ═══════════════════════════════════════════
-#
-# SECTION 0 - HEADER
-# What it shows: The dashboard name and operational purpose.
-# Why it matters for Bykea: It tells viewers this is about ride-hailing performance,
-# not just generic charts.
-# Business question: What is this dashboard designed to monitor?
-# Senior analyst focus: Whether the dashboard has a clear audience and decision goal.
-# Q1: Why start with a header? A: It frames the business context before analysis.
-# Q2: Why include a subtitle? A: It clarifies that charts are operational insights.
-# Q3: Why use brand styling? A: It makes the dashboard feel company-specific and polished.
-#
-# SECTION 1 - KPI ROW
-# What it shows: Total rides, revenue, average fare, average distance, and cancellation rate.
-# Why it matters for Bykea: These are the fastest indicators of demand, monetization,
-# pricing, trip behavior, and reliability.
-# Business question: Is the marketplace healthy at a high level?
-# Senior analyst focus: Whether revenue growth comes from more rides or higher fares,
-# and whether cancellations are damaging customer trust.
-# Q1: What does total rides measure? A: Demand volume in the selected period.
-# Q2: Why track cancellation rate? A: It measures failed marketplace matches.
-# Q3: Why compare with the previous period? A: It gives context to whether performance improved.
-#
-# SECTION 2 - DAILY RIDE VOLUME TREND
-# What it shows: Daily ride count, revenue in thousands, and a 7-day ride average.
-# Why it matters for Bykea: It reveals demand spikes, dips, and revenue movement over time.
-# Business question: How is demand changing day by day?
-# Senior analyst focus: Peak days, sudden drops, seasonality, and whether revenue follows rides.
-# Q1: Why use a rolling average? A: It smooths noisy daily variation.
-# Q2: Why use dual axes? A: Ride count and revenue have different units.
-# Q3: What does a peak-day annotation do? A: It directs attention to the maximum demand day.
-#
-# SECTION 3 - HOURLY, WEEKLY, AND PAYMENT PATTERNS
-# What it shows: Demand by hour, weekday performance, and payment method split.
-# Why it matters for Bykea: It helps plan driver supply, promotions, and cash operations.
-# Business question: When do riders book and how do they pay?
-# Senior analyst focus: Commute peaks, weekend shifts, and dependence on cash.
-# Q1: Why study hourly demand? A: Driver dispatch depends on time-of-day demand.
-# Q2: Why order weekdays Monday to Sunday? A: It preserves calendar logic.
-# Q3: Why does cash share matter? A: Cash affects settlements, fraud controls, and wallet adoption.
-#
-# SECTION 4 - CITY DEEP DIVE
-# What it shows: City-level rides, revenue, average fare, and top pickup areas.
-# Why it matters for Bykea: Each city behaves like a different market with different density.
-# Business question: Which cities and neighborhoods drive the business?
-# Senior analyst focus: Whether Karachi dominance is volume-driven, fare-driven, or both.
-# Q1: Why segment by city first? A: Geography is usually the largest operational difference.
-# Q2: Why rank pickup areas by revenue? A: Revenue hotspots guide driver positioning.
-# Q3: Why include average fare? A: It separates price level from ride volume.
-#
-# SECTION 5 - FARE AND DISTANCE ANALYSIS
-# What it shows: Fare distribution and the distance-fare relationship.
-# Why it matters for Bykea: It validates pricing behavior and highlights unusual fare patterns.
-# Business question: Are fares predictable and aligned with trip distance?
-# Senior analyst focus: Skew, outliers, and whether short or long rides are mispriced.
-# Q1: Why compare mean and median? A: Skewed fares can make the mean misleading.
-# Q2: What should the scatter trend show? A: Fare should generally rise with distance.
-# Q3: Why size points by rating? A: It layers service quality onto pricing behavior.
-#
-# SECTION 6 - PEAK VS OFF-PEAK
-# What it shows: Peak and off-peak average fares, rides, revenue share, and hourly mix.
-# Why it matters for Bykea: Peak periods influence surge pricing and driver incentives.
-# Business question: How much do commute hours contribute to revenue and volume?
-# Senior analyst focus: Whether surge increases revenue without creating cancellation problems.
-# Q1: Why define peak hours? A: Commute windows have predictable demand pressure.
-# Q2: Why compare revenue share? A: It shows financial importance beyond ride count.
-# Q3: What is surge pricing rationale? A: Higher prices attract supply when demand is high.
-#
-# SECTION 7 - VEHICLE TYPE ANALYSIS
-# What it shows: Bike, Cargo, and Rickshaw metrics plus a normalized radar comparison.
-# Why it matters for Bykea: Different vehicles serve different customer needs and economics.
-# Business question: Which vehicle category performs best on volume, fare, distance, and reliability?
-# Senior analyst focus: Product mix, cancellation risk, and whether cargo earns more per ride.
-# Q1: Why normalize radar metrics? A: Different units need a common 0-1 scale.
-# Q2: Why compare cancellation by vehicle? A: Product reliability can vary by supply type.
-# Q3: Why is bike volume important? A: Bikes are core to fast, low-cost urban mobility.
-#
-# SECTION 8 - DRIVER ANALYTICS
-# What it shows: Top drivers by earnings and the distribution of driver ratings.
-# Why it matters for Bykea: Drivers are the supply side of the marketplace.
-# Business question: Who are the top performers and is service quality strong?
-# Senior analyst focus: Concentration of earnings, rating risk, and whether incentives are fair.
-# Q1: Why rank by total earnings? A: Earnings combine activity and fare value.
-# Q2: Why highlight top 3 drivers? A: It quickly identifies best performers.
-# Q3: Why use rating zones? A: Zones translate numeric ratings into quality categories.
-#
-# SECTION 9 - CANCELLATION ANALYSIS
-# What it shows: Cancellation reasons and cancellation rate by city/time bucket.
-# Why it matters for Bykea: Cancellations reveal failed matches and customer pain.
-# Business question: Why are rides failing and when should operations intervene?
-# Senior analyst focus: Supply shortages, price objections, city-hour hotspots, and preventable failures.
-# Q1: Why analyze reasons separately? A: Different reasons require different fixes.
-# Q2: Why use a heatmap? A: It makes city-time risk patterns easy to spot.
-# Q3: What would high evening cancellations imply? A: Demand may exceed available drivers.
-#
-# SECTION 10 - MONTHLY PERFORMANCE SUMMARY
-# What it shows: Monthly rides, revenue, fare, distance, cancellations, top city, and top payment method.
-# Why it matters for Bykea: Monthly summaries support management reviews and planning.
-# Business question: How did the business perform month by month?
-# Senior analyst focus: Month-over-month movement, changing payment behavior, and cancellation trends.
-# Q1: Why include top payment method? A: It tracks digital adoption versus cash reliance.
-# Q2: Why format revenue? A: Currency formatting makes executive tables readable.
-# Q3: Why use conditional color? A: It helps high-value months stand out immediately.
-#
-# SECTION 11 - RIDER ACTIVITY COHORT
-# What it shows: How many riders from each first-ride month were active in later months.
-# Why it matters for Bykea: Retention determines whether growth compounds or leaks away.
-# Business question: Do new riders come back after their first month?
-# Senior analyst focus: Cohort drop-off speed, retention stability, and months with stronger acquisition quality.
-# Q1: What is a cohort? A: A group of users who started in the same period.
-# Q2: Why count unique riders? A: Retention measures people returning, not total trips.
-# Q3: Why is retention critical? A: Keeping riders lowers growth cost and increases lifetime value.
-#
-# FOOTER
-# What it shows: Dashboard ownership and application context.
-# Why it matters for Bykea: It makes the project presentable for a portfolio or interview.
-# Business question: Who built this and for what context?
-# Senior analyst focus: Professional polish and clear authorship.
-# Q1: Why add a footer? A: It gives attribution and context.
-# Q2: Why mention FAST-NUCES? A: It ties the work to the internship application.
-# Q3: Why repeat the dashboard name? A: It reinforces branding at the end.
